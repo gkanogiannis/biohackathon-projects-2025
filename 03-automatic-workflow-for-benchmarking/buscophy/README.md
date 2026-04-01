@@ -90,17 +90,21 @@ You can use this workflow with conda or singularity / apptainer.
 
 #### If you are running it with Conda :
 
-4. Create base conda environment 
+4a. Create base conda environment 
    
 `conda env create --file base_snakemake.yml`
 
-6. Run the worflow
+4a. Activate base conda environment
+
+`conda activate $(grep "name:" base_snakemake.yml | awk '{print $2}')`
+
+5a. Run the worflow
    
 `snakemake --use-conda --cores 40 --resources write_slots=1`
 
 #### If you are using it with singularity / apptainer :
 
-4. Run the workflow
+5b. Run the workflow
    
 `snakemake --cores 40 --resources write_slots=1 --use-singularity --singularity-args="--cleanenv --no-home --bind /path/to/cwd/"`
 Make sure to update the path to your current working directory (cwd) in the command line above
