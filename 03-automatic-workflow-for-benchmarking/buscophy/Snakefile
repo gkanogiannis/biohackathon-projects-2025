@@ -38,6 +38,8 @@ rule busco_download:
         dwnld="results/busco"
     log:
         "results/logs/busco/download_{lineage}.log"
+    benchmark:
+        "results/benchmark/busco_download/{lineage}.txt"
     conda:
         "envs/busco_6.yml"
     container:
@@ -80,15 +82,17 @@ rule busco_run:
 
 rule busco_summary:
     input:
-        expand("results/busco/{species}/short_summary.specific.{lineage}.{species}.json", 
-            lineage=busco_lineages, 
-            species=FILES.species 
+        expand("results/busco/{species}/short_summary.specific.{lineage}.{species}.json",
+            lineage=busco_lineages,
+            species=FILES.species
             )
     output:
         "results/busco/summary/busco_summary.done"
     params:
         dir="results/busco/summary/"
     threads: 1
+    benchmark:
+        "results/benchmark/busco_summary/summary.txt"
     conda:
         "envs/busco_6.yml"
     container:
@@ -120,6 +124,8 @@ rule get_nt:
         touch("results/phylo/{species}.{lineage}.nt_collection.log")
     resources:
         write_slots = 1
+    benchmark:
+        "results/benchmark/get_nt/{species}.{lineage}.txt"
     params:
         phylo_dir="results/phylo/busco_sequences",
         fragmented="yes" if config["fragmented"]=="yes" else [],
@@ -176,6 +182,8 @@ rule get_aa:
     resources:
         write_slots = 1
     threads: 1
+    benchmark:
+        "results/benchmark/get_aa/{species}.{lineage}.txt"
     shell:
         """
 [ ! -d {params.phylo_dir} ] && mkdir -p {params.phylo_dir}
@@ -229,6 +237,8 @@ rule filter_busco:
         min_genes=config["min_genes"],
         fragmented="yes" if config["fragmented"]== "yes" else [],
     threads: 1
+    benchmark:
+        "results/benchmark/filter_busco/filter.txt"
     shell:
         """
 FRAG={params.fragmented}
@@ -295,6 +305,8 @@ rule busco_mafft:
     threads: 1
     log:
         "results/logs/phylo/mafft/{busco_EOG}.log"
+    benchmark:
+        "results/benchmark/busco_mafft/{busco_EOG}.txt"
     conda:
         "envs/mafft.yaml"
     container:
@@ -312,6 +324,8 @@ rule busco_trim:
     threads: 1
     log:
         "results/logs/phylo/trimal/{busco_EOG}.log"
+    benchmark:
+        "results/benchmark/busco_trim/{busco_EOG}.txt"
     conda:
         "envs/trimal.yaml"
     container:
@@ -333,6 +347,8 @@ rule busco_geneTrees:
     params:
         out_prefix="results/phylo/busco_aa_gene_trees/{busco_EOG}_aa",
         model="JTT"
+    benchmark:
+        "results/benchmark/busco_geneTrees/{busco_EOG}.txt"
     conda:
         "envs/iqtree.yaml"
     container:
@@ -440,6 +456,8 @@ rule paralogous_filtering:
     threads: 1
     log:
         "results/logs/paralogous_filtering.{busco_EOG}.log"
+    benchmark:
+        "results/benchmark/paralogous_filtering/{busco_EOG}.txt"
     conda:
         "envs/paralog.yaml"
     container:
@@ -457,6 +475,8 @@ rule clean_header_adjusted:
     threads: 1
     log:
         "results/logs/rename_adjusted.{busco_EOG}.log"
+    benchmark:
+        "results/benchmark/clean_header/{busco_EOG}.txt"
     shell:
         """
 # split the header and only keep the first two parts of the name
@@ -512,13 +532,15 @@ echo "all trees ready to process... "
 
 rule busco_supermatrix:
     input:
-        get_all_filtered_alignments 
+        process_filtered_alignments
     output:
         matrix="results/phylo/supermatrix_aa.fasta",
         partitions="results/phylo/partitions_aa.txt"
     threads: 1
     log:
         "results/logs/phylo/supermatrix_aa.log"
+    benchmark:
+        "results/benchmark/busco_supermatrix/supermatrix.txt"
     conda:
         "envs/amas.yaml"
     container:
@@ -530,22 +552,24 @@ rule busco_supermatrix:
 
 rule busco_iqtree:
     input:
-        sequence="results/phylo/supermatrix_aa.fasta",      
+        sequence="results/phylo/supermatrix_aa.fasta",
     output:
         "results/phylo/busco_phylo.treefile"
-    threads: config['max_threads'] 
+    threads: config['max_threads']
     params:
         out_prefix="results/phylo/busco_phylo",
-        model="JTT" # might need to do real model testing... 
+        model="JTT" # might need to do real model testing...
     conda:
         "envs/iqtree.yaml"
     container:
         "https://depot.galaxyproject.org/singularity/iqtree%3A3.0.1--h503566f_0"
     log:
         "results/logs/phylo/iqtree.log"
+    benchmark:
+        "results/benchmark/busco_iqtree/iqtree.txt"
     shell:
         """
-( iqtree -s {input.sequence} --prefix {params.out_prefix} -T AUTO --threads-max {threads} -m {params.model} -msub nuclear -B 1000 -alrt 1000 ) &> {log}
+( rm -f {params.out_prefix}.ckp.gz && iqtree -s {input.sequence} --prefix {params.out_prefix} -T AUTO --threads-max {threads} -m {params.model} -msub nuclear -B 1000 -alrt 1000 ) &> {log}
         """
 
 rule overview:

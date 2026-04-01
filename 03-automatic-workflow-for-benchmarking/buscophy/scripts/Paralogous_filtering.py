@@ -82,6 +82,9 @@ def load_and_root_tree(tfile, afile=None):
     :param tfile: a tree file in a newick format
     :return: loaded and rooted tree
     '''
+    if os.path.getsize(tfile) == 0:
+        print(f"Skipping tree {tfile}: empty treefile")
+        return None
     t = PhyloTree(tfile, parser=1, sp_naming_function=extract_int_node_names)
     # Check number of taxa
     if len(list(t.leaves())) < 3:
@@ -276,8 +279,13 @@ def view_tree(tfile, afile, aoutfile, poutfile, soutfile):
     alignment_file=afile + '.tmp'
         # load and root trees to a midpoint using ete4
     t = load_and_root_tree(tree_file, alignment_file)
-        #if t is None:
-        #    continue
+    if t is None:
+        open(aoutfile, 'w').close()
+        open(poutfile, 'w').close()
+        with open(soutfile, 'w') as par_stat:
+            par_stat.write(f"Name\tSequence_number\tIn_paralogs\tOut_paralogs\tIn_paralog_proportion\tOut_paralog_proportion\n")
+            par_stat.write(f"skipped\t0\t0\t0\t0\t0\n")
+        return
         # preserve the original alignment file
     base_name, ext = os.path.splitext(alignment_file)
     #alignment_file_copy = f"{base_name}.original"

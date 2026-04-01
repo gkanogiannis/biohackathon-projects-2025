@@ -22,10 +22,10 @@ shift 2>/dev/null || true
 EXTRA_ARGS="$*"
 
 LOGFILE="snakemake_run.log"
-TIMING_DIR="results/benchmark"
-TIMING_SUMMARY="${TIMING_DIR}/timing.tsv"
+BENCHMARK_DIR="results/benchmark"
+TIMING_SUMMARY="${BENCHMARK_DIR}/timing.tsv"
 
-mkdir -p "${TIMING_DIR}"
+mkdir -p "${BENCHMARK_DIR}"
 
 echo "============================================="
 echo " BuscoPhy Benchmark Run"
@@ -54,119 +54,146 @@ echo "============================================="
 echo " Pipeline completed in ${PIPELINE_ELAPSED}s ($(date -d@${PIPELINE_ELAPSED} -u +%H:%M:%S 2>/dev/null || printf '%02d:%02d:%02d' $((PIPELINE_ELAPSED/3600)) $(((PIPELINE_ELAPSED%3600)/60)) $((PIPELINE_ELAPSED%60))))"
 echo "============================================="
 
-# Parse timestamps from log to compute per-rule wall-clock times
+# ── Aggregate Snakemake benchmark files ──────────────────────────────────────
 echo ""
-echo "=== Per-rule timing (from log timestamps) ==="
-echo -e "rule\tjob_id\tstart\tend\tduration_sec" > "${TIMING_SUMMARY}"
+echo "=== Aggregating Snakemake benchmark files ==="
 
-# Extract rule start and finish events from the log
-grep -E "^\[.+\] (localrule|rule) " "${LOGFILE}" | while read -r line; do
-    ts=$(echo "$line" | grep -oP '^\[\K[0-9-]+ [0-9:]+')
-    rule=$(echo "$line" | grep -oP '(localrule|rule) \K\w+')
-    echo "START ${ts} ${rule}"
-done > "${TIMING_DIR}/_starts.tmp"
-
-grep -E "^\[.+\] Finished jobid:" "${LOGFILE}" | while read -r line; do
-    ts=$(echo "$line" | grep -oP '^\[\K[0-9-]+ [0-9:]+')
-    jobid=$(echo "$line" | grep -oP 'jobid: \K\d+')
-    rule=$(echo "$line" | grep -oP 'Rule: \K\w+')
-    echo "END ${ts} ${rule} ${jobid}"
-done > "${TIMING_DIR}/_ends.tmp"
-
-# Match starts and ends, compute durations
-python3 - "${TIMING_DIR}/_starts.tmp" "${TIMING_DIR}/_ends.tmp" "${TIMING_SUMMARY}" "${LOGFILE}" <<'PYEOF'
-import sys
-import re
-from datetime import datetime
+python3 - "${BENCHMARK_DIR}" "${TIMING_SUMMARY}" "${PIPELINE_ELAPSED}" <<'PYEOF'
+import sys, os, csv
+from pathlib import Path
 from collections import defaultdict
 
-starts_file, ends_file, summary_file, logfile = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+benchmark_dir = Path(sys.argv[1])
+summary_file  = sys.argv[2]
+pipeline_wall = float(sys.argv[3])
 
-# Parse start events with their timestamps
-rule_starts = []  # (datetime, rule_name)
-with open(starts_file) as f:
-    for line in f:
-        parts = line.strip().split()
-        if len(parts) >= 4:
-            ts = datetime.strptime(f"{parts[1]} {parts[2]}", "%Y-%m-%d %H:%M:%S")
-            rule = parts[3]
-            rule_starts.append((ts, rule))
+# Snakemake benchmark columns:
+# s  h:m:s  max_rss  max_vms  max_uss  max_pss  io_in  io_out  mean_load  cpu_time
+COLS = ["s", "h_m_s", "max_rss", "max_vms", "max_uss", "max_pss",
+        "io_in", "io_out", "mean_load", "cpu_time"]
 
-# Parse end events
-rule_ends = []  # (datetime, rule_name, jobid)
-with open(ends_file) as f:
-    for line in f:
-        parts = line.strip().split()
-        if len(parts) >= 5:
-            ts = datetime.strptime(f"{parts[1]} {parts[2]}", "%Y-%m-%d %H:%M:%S")
-            rule = parts[3]
-            jobid = parts[4]
-            rule_ends.append((ts, rule, jobid))
+# Collect all benchmark files grouped by rule (subdirectory name)
+rule_data = defaultdict(list)   # rule -> list of dicts
+for sub in sorted(benchmark_dir.iterdir()):
+    if not sub.is_dir():
+        continue
+    rule_name = sub.name
+    for txt in sorted(sub.glob("*.txt")):
+        try:
+            with open(txt) as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    entry = {"file": txt.name}
+                    for col in COLS:
+                        key = col if col != "h_m_s" else "h:m:s"
+                        val = row.get(key, "")
+                        if col == "h_m_s":
+                            entry[col] = val
+                        else:
+                            try:
+                                entry[col] = float(val)
+                            except (ValueError, TypeError):
+                                entry[col] = 0.0
+                    rule_data[rule_name].append(entry)
+        except Exception as e:
+            print(f"  WARNING: could not parse {txt}: {e}", file=sys.stderr)
 
-# Also parse from the snakemake log more precisely: match jobid from start blocks
-# Parse start blocks with jobid
-jobid_starts = {}
-with open(logfile) as f:
-    content = f.read()
+if not rule_data:
+    print("No benchmark files found under", benchmark_dir)
+    sys.exit(0)
 
-# Find all job start blocks (rule name + jobid + timestamp)
-start_pattern = re.compile(
-    r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\].*?(?:localrule|rule) (\w+):.*?jobid: (\d+)',
-    re.DOTALL
-)
+# ── Write per-job detail TSV ─────────────────────────────────────────────────
+with open(summary_file, "w") as f:
+    f.write("rule\tsample\twall_s\th:m:s\tcpu_time_s\tmax_rss_MB\tmax_vms_MB\t"
+            "max_uss_MB\tmax_pss_MB\tio_in_MB\tio_out_MB\tmean_load\n")
+    for rule_name in sorted(rule_data):
+        for e in sorted(rule_data[rule_name], key=lambda x: -x["s"]):
+            sample = e["file"].replace(".txt", "")
+            f.write(f"{rule_name}\t{sample}\t{e['s']:.2f}\t{e['h_m_s']}\t"
+                    f"{e['cpu_time']:.2f}\t{e['max_rss']:.1f}\t{e['max_vms']:.1f}\t"
+                    f"{e['max_uss']:.1f}\t{e['max_pss']:.1f}\t"
+                    f"{e['io_in']:.1f}\t{e['io_out']:.1f}\t{e['mean_load']:.2f}\n")
 
-for match in start_pattern.finditer(content):
-    ts_str, rule, jobid = match.groups()
-    ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-    jobid_starts[jobid] = (ts, rule)
+# ── Per-rule aggregate table ─────────────────────────────────────────────────
+header = (f"{'Rule':<25} {'Jobs':>6} {'Total(s)':>10} {'Mean(s)':>10} "
+          f"{'Min(s)':>10} {'Max(s)':>10} {'CPU(s)':>10} "
+          f"{'MaxRSS(MB)':>12} {'IO_out(MB)':>12}")
+sep = "-" * len(header)
 
-# Build timing records
-records = []
-for end_ts, rule, jobid in rule_ends:
-    if jobid in jobid_starts:
-        start_ts, start_rule = jobid_starts[jobid]
-        duration = (end_ts - start_ts).total_seconds()
-        records.append((rule, jobid, start_ts, end_ts, duration))
+print()
+print(header)
+print(sep)
 
-# Write summary
-with open(summary_file, 'w') as f:
-    f.write("rule\tjob_id\tstart\tend\tduration_sec\n")
-    for rule, jobid, start, end, dur in sorted(records, key=lambda x: x[2]):
-        f.write(f"{rule}\t{jobid}\t{start}\t{end}\t{dur:.0f}\n")
+grand_wall  = 0.0
+grand_cpu   = 0.0
+grand_rss   = 0.0
 
-# Print per-rule aggregate
-print(f"\n{'Rule':<30} {'Count':>6} {'Total(s)':>10} {'Mean(s)':>10} {'Min(s)':>10} {'Max(s)':>10}")
-print("-" * 80)
+# Define display order matching pipeline execution flow
+RULE_ORDER = [
+    "busco_download", "busco", "busco_summary",
+    "get_nt", "get_aa", "filter_busco",
+    "busco_mafft", "busco_trim", "busco_geneTrees",
+    "paralogous_filtering", "clean_header",
+    "busco_supermatrix", "busco_iqtree",
+]
 
-rule_durations = defaultdict(list)
-for rule, _, _, _, dur in records:
-    rule_durations[rule].append(dur)
+def sort_key(name):
+    try:
+        return RULE_ORDER.index(name)
+    except ValueError:
+        return len(RULE_ORDER)
 
-for rule in sorted(rule_durations.keys()):
-    durs = rule_durations[rule]
-    print(f"{rule:<30} {len(durs):>6} {sum(durs):>10.0f} {sum(durs)/len(durs):>10.1f} {min(durs):>10.0f} {max(durs):>10.0f}")
+for rule_name in sorted(rule_data, key=sort_key):
+    entries   = rule_data[rule_name]
+    walls     = [e["s"] for e in entries]
+    cpus      = [e["cpu_time"] for e in entries]
+    rss_vals  = [e["max_rss"] for e in entries]
+    io_outs   = [e["io_out"] for e in entries]
+    n         = len(entries)
+    total_w   = sum(walls)
+    total_cpu = sum(cpus)
+    max_rss   = max(rss_vals)
+    total_io  = sum(io_outs)
 
-total = sum(d for durs in rule_durations.values() for d in durs)
-print("-" * 80)
-print(f"{'TOTAL (sum of all jobs)':<30} {'':>6} {total:>10.0f}")
+    print(f"{rule_name:<25} {n:>6} {total_w:>10.1f} {total_w/n:>10.1f} "
+          f"{min(walls):>10.1f} {max(walls):>10.1f} {total_cpu:>10.1f} "
+          f"{max_rss:>12.1f} {total_io:>12.1f}")
+
+    grand_wall += total_w
+    grand_cpu  += total_cpu
+    grand_rss   = max(grand_rss, max_rss)
+
+print(sep)
+print(f"{'SUM (all jobs)':<25} {'':>6} {grand_wall:>10.1f} {'':>10} "
+      f"{'':>10} {'':>10} {grand_cpu:>10.1f} "
+      f"{grand_rss:>12.1f} {'':>12}")
+print(f"{'PIPELINE WALL-CLOCK':<25} {'':>6} {pipeline_wall:>10.1f}")
+print(f"{'PARALLEL SPEEDUP':<25} {'':>6} {grand_wall/pipeline_wall:>10.1f}x" if pipeline_wall > 0 else "")
+
+# ── Per-rule resource summary TSV ────────────────────────────────────────────
+resource_file = os.path.join(os.path.dirname(summary_file), "resource_summary.tsv")
+with open(resource_file, "w") as f:
+    f.write("rule\tjobs\ttotal_wall_s\tmean_wall_s\tmin_wall_s\tmax_wall_s\t"
+            "total_cpu_s\tmax_rss_MB\tmean_rss_MB\ttotal_io_out_MB\n")
+    for rule_name in sorted(rule_data, key=sort_key):
+        entries   = rule_data[rule_name]
+        walls     = [e["s"] for e in entries]
+        cpus      = [e["cpu_time"] for e in entries]
+        rss_vals  = [e["max_rss"] for e in entries]
+        io_outs   = [e["io_out"] for e in entries]
+        n         = len(entries)
+        f.write(f"{rule_name}\t{n}\t{sum(walls):.2f}\t{sum(walls)/n:.2f}\t"
+                f"{min(walls):.2f}\t{max(walls):.2f}\t{sum(cpus):.2f}\t"
+                f"{max(rss_vals):.1f}\t{sum(rss_vals)/n:.1f}\t{sum(io_outs):.1f}\n")
+    f.write(f"PIPELINE_TOTAL\t\t{pipeline_wall:.2f}\t\t\t\t{grand_cpu:.2f}\t"
+            f"{grand_rss:.1f}\t\t\n")
+
+print()
+print(f"Per-job detail:     {summary_file}")
+print(f"Resource summary:   {resource_file}")
 
 PYEOF
 
-# Also report snakemake benchmark files if they exist
-if ls "${TIMING_DIR}"/busco/*.txt 1>/dev/null 2>&1; then
-    echo ""
-    echo "=== Snakemake benchmark files (BUSCO per-sample) ==="
-    echo -e "sample\ts\th:m:s\tmax_rss\tmax_vms\tmax_uss\tmax_pss\tio_in\tio_out\tmean_load\tcpu_time"
-    for f in "${TIMING_DIR}"/busco/*.txt; do
-        sample=$(basename "$f" .txt | sed 's/\.eukaryota_odb12//')
-        tail -1 "$f" | awk -v s="$sample" '{printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10}'
-    done
-fi
-
-# Cleanup temp files
-rm -f "${TIMING_DIR}/_starts.tmp" "${TIMING_DIR}/_ends.tmp"
-
 echo ""
-echo "Full log:      ${LOGFILE}"
-echo "Timing summary: ${TIMING_SUMMARY}"
-echo "Benchmark dir:  ${TIMING_DIR}/"
+echo "Full log:           ${LOGFILE}"
+echo "Benchmark dir:      ${BENCHMARK_DIR}/"

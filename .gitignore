@@ -1,0 +1,4 @@
+03-automatic-workflow-for-benchmarking/buscophy/.snakemake/
+03-automatic-workflow-for-benchmarking/buscophy/input_test/
+03-automatic-workflow-for-benchmarking/buscophy/results/
+03-automatic-workflow-for-benchmarking/buscophy/snakemake_run.log
