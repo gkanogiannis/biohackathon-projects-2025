@@ -532,7 +532,7 @@ echo "all trees ready to process... "
 
 rule busco_supermatrix:
     input:
-        process_filtered_alignments
+        get_all_filtered_alignments
     output:
         matrix="results/phylo/supermatrix_aa.fasta",
         partitions="results/phylo/partitions_aa.txt"
