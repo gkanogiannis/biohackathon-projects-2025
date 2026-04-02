@@ -1,0 +1,31 @@
+=============================================
+ Pipeline completed in 15920s (04:25:20)
+=============================================
+
+=== Aggregating Snakemake benchmark files ===
+
+Rule                        Jobs   Total(s)    Mean(s)     Min(s)     Max(s)     CPU(s)   MaxRSS(MB)   IO_out(MB)
+-----------------------------------------------------------------------------------------------------------------
+busco_download                 1       20.8       20.8       20.8       20.8        4.0         92.1       1098.3
+busco                          8    17532.2     2191.5     1213.1     3982.0   148939.4      20026.0     349079.5
+busco_summary                  1        0.9        0.9        0.9        0.9        0.4        115.5          0.0
+get_nt                         8      200.9       25.1        2.6       33.7       17.4          5.7        222.7
+get_aa                         8      282.3       35.3        3.7       48.8       36.4          7.0        426.8
+filter_busco                   1        0.1        0.1        0.1        0.1        0.0          3.7          0.1
+busco_mafft                 5674    13058.7        2.3        0.3       83.3      190.6       4623.8          3.6
+busco_trim                  5674    12586.6        2.2        0.2        7.8        2.0         62.8          0.0
+busco_geneTrees             5674    15974.7        2.8        1.4       14.3     1266.8         62.9         28.9
+paralogous_filtering        5674    13910.8        2.5        0.6        7.7        4.8        121.3          0.1
+clean_header                5674    12978.8        2.3        0.1        7.7        0.0          0.0          0.0
+busco_supermatrix              1        2.7        2.7        2.7        2.7        0.0          0.0          0.0
+busco_iqtree                   1      604.3      604.3      604.3      604.3     4105.1       4024.7          1.0
+-----------------------------------------------------------------------------------------------------------------
+SUM (all jobs)                      87153.8                                    154566.9      20026.0
+PIPELINE WALL-CLOCK                 15920.0
+PARALLEL SPEEDUP                        5.5x
+
+Per-job detail:     results/benchmark/timing.tsv
+Resource summary:   results/benchmark/resource_summary.tsv
+
+Full log:           snakemake_run.log
+Benchmark dir:      results/benchmark/
